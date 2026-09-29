@@ -13,8 +13,8 @@ export function TopBar() {
   const cur = (p: string) => (path === p || (p !== "/" && path.startsWith(p)) ? "page" : undefined);
   if (path.startsWith("/embed")) return null;
   return (
-    <nav className="topbar" aria-label="Main">
-      <Link href="/" className="brand">
+    <nav className={`topbar${address ? " signed" : ""}`} aria-label="Main">
+      <Link href="/" className="brand" aria-label="Friends Publishing House home">
         <svg width="30" height="30" viewBox="-1 -1 10 10" shapeRendering="crispEdges" aria-hidden>
           <rect x="-1" y="-1" width="10" height="10" fill="#CCFF00" />
           <path fill="#0a0a0a" d={MARK} />

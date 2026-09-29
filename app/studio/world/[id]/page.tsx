@@ -6,11 +6,15 @@ import { FriendIcon, FriendPicker } from "@/components/FriendPicker";
 import { Gate } from "@/components/Gate";
 import { onGround, propImage, worldImage } from "@/components/render/worlds";
 import { useArt } from "@/components/useArt";
+import { useAppViewport, useCanvasTouch, useCoarsePointer, useUnitsPerPx } from "@/components/useAppViewport";
 import { useAutosave } from "@/components/useAutosave";
 import { api } from "@/components/useSession";
 import { FACINGS, friendKey, MAX_WORLD_CAST, MAX_WORLD_PROPS, PROP_TYPES, WORLD_BASES, type FriendRef, type WorldBaseId, type WorldDoc } from "@/lib/model";
 
 type Sel = { kind: "prop" | "cast"; i: number } | null;
+type Tab = "world" | "props" | "cast" | "edit";
+const TABS: [Tab, string][] = [["world", "World"], ["props", "Props"], ["cast", "Friends"], ["edit", "Edit"]];
+const HISTORY = 60;
 
 /** The part of the SDK's 1600 x 1200 canvas a base world occupies, with headroom for tall props. */
 function viewBoxFor(base: WorldBaseId) {
@@ -39,7 +43,16 @@ function Builder({ id }: { id: string }) {
   const [error, setError] = useState<string | null>(null);
   const [sel, setSel] = useState<Sel>(null);
   const svgRef = useRef<SVGSVGElement>(null);
-  const drag = useRef<{ kind: "prop" | "cast"; i: number; dx: number; dy: number } | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ kind: "prop" | "cast"; i: number; dx: number; dy: number; pointer: number; moved: boolean } | null>(null);
+  const past = useRef<WorldDoc[]>([]);
+  const current = useRef<WorldDoc | null>(null);
+  current.current = world;
+  const [, setUndoTick] = useState(0);
+  const [tab, setTab] = useState<Tab>("world");
+  const [trayOpen, setTrayOpen] = useState(true);
+  useAppViewport(rootRef);
+  const coarse = useCoarsePointer();
 
   useEffect(() => {
     api<{ world: WorldDoc }>(`/api/worlds/${id}`).then((j) => setWorld(j.world), (e) => setError(e.message));
@@ -48,7 +61,50 @@ function Builder({ id }: { id: string }) {
   const { art } = useArt(world?.scene.cast.map((c) => c.friend) ?? []);
 
   const update = useCallback((fn: (w: WorldDoc) => WorldDoc) => setWorld((w) => (w ? fn(w) : w)), []);
+  // History is pushed from a ref outside the state updaters, which React may run twice in development.
+  const snapshot = useCallback(() => {
+    if (!current.current) return;
+    past.current.push(current.current);
+    if (past.current.length > HISTORY) past.current.shift();
+    setUndoTick((t) => t + 1);
+  }, []);
+  const record = useCallback((fn: (w: WorldDoc) => WorldDoc) => {
+    snapshot();
+    update(fn);
+  }, [snapshot, update]);
+  const undo = useCallback(() => {
+    const prev = past.current.pop();
+    if (!prev) return;
+    setWorld(prev);
+    setSel(null);
+    setUndoTick((t) => t + 1);
+  }, []);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement).closest("input, textarea, select, [contenteditable]")) return;
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        undo();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [undo]);
+  const selKey = sel ? `${sel.kind}${sel.i}` : "";
+  useEffect(() => {
+    if (selKey && trayOpen) setTab("edit");
+  }, [selKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const pickTab = (t: Tab) => {
+    if (trayOpen && tab === t) setTrayOpen(false);
+    else {
+      setTab(t);
+      setTrayOpen(true);
+    }
+  };
   const vb = useMemo(() => (world ? viewBoxFor(world.scene.base) : null), [world?.scene.base]); // eslint-disable-line react-hooks/exhaustive-deps
+  const upp = useUnitsPerPx(svgRef, vb?.w ?? 1, vb);
+  useCanvasTouch(svgRef, vb);
+
 
   const toSvg = (e: { clientX: number; clientY: number }) => {
     const svg = svgRef.current!;
@@ -68,29 +124,39 @@ function Builder({ id }: { id: string }) {
     ...scene.cast.map((c, i) => ({ kind: "cast" as const, i, x: c.x, y: c.y })),
   ];
 
+  // Hit radius in world units: 60, or about a fingertip (26px) when the world is drawn small on a phone.
+  const reach = Math.max(60, (coarse ? 26 : 16) * upp);
   const onDown = (e: React.PointerEvent) => {
+    if (drag.current) return;
     const [sx, sy] = toSvg(e);
     let best: { kind: "prop" | "cast"; i: number; d: number; dx: number; dy: number } | null = null;
     for (const h of handles) {
       const [hx, hy] = project(h.x, h.y);
       // Hit area: the ground anchor and the body above it (props and Friends stand up from their anchor).
       const d = Math.hypot(sx - hx, Math.max(0, sy - hy) + Math.max(0, hy - 110 - sy) * 0.4);
-      if (d < 60 && (!best || d < best.d)) best = { kind: h.kind, i: h.i, d, dx: hx - sx, dy: hy - sy };
+      // When things overlap, the selected one wins, then whatever is listed later (Friends over props).
+      const score = sel?.kind === h.kind && sel.i === h.i ? d * 0.5 : d;
+      if (d < reach && (!best || score <= best.d)) best = { kind: h.kind, i: h.i, d: score, dx: hx - sx, dy: hy - sy };
     }
     if (!best) {
       setSel(null);
       return;
     }
     setSel({ kind: best.kind, i: best.i });
-    drag.current = { kind: best.kind, i: best.i, dx: best.dx, dy: best.dy };
-    (e.target as Element).setPointerCapture?.(e.pointerId);
+    drag.current = { kind: best.kind, i: best.i, dx: best.dx, dy: best.dy, pointer: e.pointerId, moved: false };
+    e.currentTarget.setPointerCapture?.(e.pointerId);
   };
   const onMove = (e: React.PointerEvent) => {
     const d = drag.current;
-    if (!d) return;
+    if (!d || e.pointerId !== d.pointer) return;
     const [sx, sy] = toSvg(e);
     const [x, y] = unproject(sx + d.dx, sy + d.dy);
     if (!onGround(scene.base, x, y)) return;
+    // Only a real move goes into the undo history, not a tap that just selects.
+    if (!d.moved) {
+      d.moved = true;
+      snapshot();
+    }
     update((w) => {
       const s = { ...w.scene };
       if (d.kind === "prop") s.props = s.props.map((p, i) => (i === d.i ? { ...p, x, y } : p));
@@ -98,23 +164,25 @@ function Builder({ id }: { id: string }) {
       return { ...w, scene: s };
     });
   };
-  const onUp = () => (drag.current = null);
+  const onUp = (e: React.PointerEvent) => {
+    if (drag.current?.pointer === e.pointerId) drag.current = null;
+  };
 
   const addProp = (type: (typeof PROP_TYPES)[number]) => {
     if (scene.props.length >= MAX_WORLD_PROPS) return;
     const [x, y] = groundSpot(scene.base, scene.props.length);
-    update((w) => ({ ...w, scene: { ...w.scene, props: [...w.scene.props, { type, x, y, scale: 1 }] } }));
+    record((w) => ({ ...w, scene: { ...w.scene, props: [...w.scene.props, { type, x, y, scale: 1 }] } }));
     setSel({ kind: "prop", i: scene.props.length });
   };
   const addCast = (friend: FriendRef) => {
     if (scene.cast.length >= MAX_WORLD_CAST) return;
     const [x, y] = groundSpot(scene.base, scene.cast.length + 1);
-    update((w) => ({ ...w, scene: { ...w.scene, cast: [...w.scene.cast, { friend, x, y, facing: "down", pose: "idle", frame: 0, scale: 4 }] } }));
+    record((w) => ({ ...w, scene: { ...w.scene, cast: [...w.scene.cast, { friend, x, y, facing: "down", pose: "idle", frame: 0, scale: 4 }] } }));
     setSel({ kind: "cast", i: scene.cast.length });
   };
   const setBase = (base: WorldBaseId) => {
     // Props and Friends that would fall off the new terrain move to its starting spots.
-    update((w) => ({
+    record((w) => ({
       ...w,
       scene: {
         base,
@@ -133,30 +201,34 @@ function Builder({ id }: { id: string }) {
   };
   const remove = () => {
     if (!sel) return;
-    update((w) => ({ ...w, scene: { ...w.scene, [sel.kind === "prop" ? "props" : "cast"]: (sel.kind === "prop" ? w.scene.props : w.scene.cast).filter((_, i) => i !== sel.i) } }));
+    record((w) => ({ ...w, scene: { ...w.scene, [sel.kind === "prop" ? "props" : "cast"]: (sel.kind === "prop" ? w.scene.props : w.scene.cast).filter((_, i) => i !== sel.i) } }));
     setSel(null);
   };
 
   const selProp = sel?.kind === "prop" ? scene.props[sel.i] : undefined;
   const selCast = sel?.kind === "cast" ? scene.cast[sel.i] : undefined;
-  const setCast = (patch: Partial<WorldDoc["scene"]["cast"][number]>) => update((w) => ({ ...w, scene: { ...w.scene, cast: w.scene.cast.map((c, i) => (sel?.kind === "cast" && i === sel.i ? { ...c, ...patch } : c)) } }));
-  const setProp = (patch: Partial<WorldDoc["scene"]["props"][number]>) => update((w) => ({ ...w, scene: { ...w.scene, props: w.scene.props.map((p, i) => (sel?.kind === "prop" && i === sel.i ? { ...p, ...patch } : p)) } }));
+  const setCast = (patch: Partial<WorldDoc["scene"]["cast"][number]>, rec = true) => (rec ? record : update)((w) => ({ ...w, scene: { ...w.scene, cast: w.scene.cast.map((c, i) => (sel?.kind === "cast" && i === sel.i ? { ...c, ...patch } : c)) } }));
+  const setProp = (patch: Partial<WorldDoc["scene"]["props"][number]>, rec = true) => (rec ? record : update)((w) => ({ ...w, scene: { ...w.scene, props: w.scene.props.map((p, i) => (sel?.kind === "prop" && i === sel.i ? { ...p, ...patch } : p)) } }));
 
   return (
-    <div className="editor" style={{ gridTemplateRows: "auto 1fr" }}>
+    <div className="editor app world-app" ref={rootRef}>
       <div className="editor-bar">
-        <Link href="/studio?tab=worlds" className="btn small">← Worlds</Link>
+        <Link href="/studio?tab=worlds" className="btn small" aria-label="Back to your worlds">←<span className="desk-only">&nbsp;Worlds</span></Link>
         <input className="title" value={world.name} maxLength={60} onChange={(e) => update((w) => ({ ...w, name: e.target.value }))} aria-label="World name" />
         <div className="toggle" role="group" aria-label="Colour mode">
-          <button aria-pressed={!world.color} onClick={() => update((w) => ({ ...w, color: false }))}>B&amp;W</button>
-          <button aria-pressed={world.color} className="color-on" onClick={() => update((w) => ({ ...w, color: true }))}>Colour</button>
+          <button aria-pressed={!world.color} onClick={() => record((w) => ({ ...w, color: false }))}>B&amp;W</button>
+          <button aria-pressed={world.color} className="color-on" onClick={() => record((w) => ({ ...w, color: true }))}>Colour</button>
         </div>
-        <span className="spacer" />
-        <span className="status">{label}</span>
+        <button className="btn small ghost icon-sm" onClick={undo} disabled={!past.current.length} title="Undo (Ctrl+Z)" aria-label="Undo">
+          <span className="phone-only" aria-hidden>↶</span>
+          <span className="desk-only">Undo</span>
+        </button>
+        <span className="spacer desk-only" />
+        <span className="status desk-only">{label}</span>
       </div>
-      <div className="editor-body" style={{ gridTemplateColumns: "minmax(0,1fr) 340px" }}>
+      <div className="editor-body world-body" data-tray={trayOpen ? "open" : "closed"}>
         <div className="stage" style={{ alignItems: "center" }}>
-          <div className="wb-stage">
+          <div className="wb-stage" style={{ "--ar": vb.w / vb.h } as React.CSSProperties}>
             <svg
               ref={svgRef}
               viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`}
@@ -180,11 +252,20 @@ function Builder({ id }: { id: string }) {
               })}
             </svg>
           </div>
-          <p className="hint" style={{ position: "absolute", bottom: 8, left: 16 }}>Drag props and Friends. They stay on the ground and sort in depth automatically.</p>
+          <p className="hint wb-hint">Drag props and Friends. They stay on the ground and sort in depth automatically.</p>
+          <span className="status phone-only wb-status">{label}</span>
         </div>
-        <aside className="inspector">
+        <div className="tray-tabs phone-only" role="tablist" aria-label="Tools">
+          {TABS.map(([t, name]) => (
+            <button key={t} role="tab" aria-selected={trayOpen && tab === t} onClick={() => pickTab(t)}>
+              {name}
+              {t === "edit" && sel ? <i className="dot" aria-hidden /> : null}
+            </button>
+          ))}
+        </div>
+        <aside className="inspector" data-tab={tab}>
           {sel && (selProp || selCast) ? (
-            <div className="panel-sec" style={{ background: "#CCFF00" }}>
+            <div className="panel-sec" data-sec="edit" style={{ background: "#CCFF00" }}>
               <h4>
                 <span>{selProp ? `PROP · ${selProp.type.toUpperCase()}` : `FRIEND · ${selCast!.friend.c.toUpperCase()} #${selCast!.friend.id}`}</span>
                 <button className="btn small danger" onClick={remove}>Remove</button>
@@ -192,14 +273,14 @@ function Builder({ id }: { id: string }) {
               {selProp ? (
                 <label className="field">
                   <span>Size</span>
-                  <input type="range" min={0.4} max={2.5} step={0.05} value={selProp.scale} onChange={(e) => setProp({ scale: +e.target.value })} />
+                  <input type="range" min={0.4} max={2.5} step={0.05} value={selProp.scale} onPointerDown={snapshot} onChange={(e) => setProp({ scale: +e.target.value }, false)} />
                 </label>
               ) : null}
               {selCast ? (
                 <>
                   <label className="field">
                     <span>Size</span>
-                    <input type="range" min={2} max={8} step={1} value={selCast.scale} onChange={(e) => setCast({ scale: +e.target.value })} />
+                    <input type="range" min={2} max={8} step={1} value={selCast.scale} onPointerDown={snapshot} onChange={(e) => setCast({ scale: +e.target.value }, false)} />
                   </label>
                   <div className="field">
                     <span>Facing</span>
@@ -218,13 +299,17 @@ function Builder({ id }: { id: string }) {
                   </div>
                   <label className="field">
                     <span>Frame {selCast.frame + 1} of 8</span>
-                    <input type="range" min={0} max={7} step={1} value={selCast.frame} onChange={(e) => setCast({ frame: +e.target.value })} />
+                    <input type="range" min={0} max={7} step={1} value={selCast.frame} onPointerDown={snapshot} onChange={(e) => setCast({ frame: +e.target.value }, false)} />
                   </label>
                 </>
               ) : null}
             </div>
-          ) : null}
-          <div className="panel-sec">
+          ) : (
+            <div className="panel-sec phone-only" data-sec="edit">
+              <p className="hint" style={{ marginTop: 0 }}>Tap a prop or a Friend in the world to move, resize or remove it.</p>
+            </div>
+          )}
+          <div className="panel-sec" data-sec="world">
             <h4>BASE WORLD · FRIENDSDK</h4>
             <div className="grid-btns two">
               {WORLD_BASES.map((b) => (
@@ -236,7 +321,7 @@ function Builder({ id }: { id: string }) {
               ))}
             </div>
           </div>
-          <div className="panel-sec">
+          <div className="panel-sec" data-sec="props">
             <h4>
               <span>ADD PROPS</span>
               <span className="mute">{scene.props.length}/{MAX_WORLD_PROPS}</span>
@@ -251,7 +336,7 @@ function Builder({ id }: { id: string }) {
               ))}
             </div>
           </div>
-          <div className="panel-sec">
+          <div className="panel-sec" data-sec="cast">
             <h4>
               <span>CAST FRIENDS</span>
               <span className="mute">{scene.cast.length}/{MAX_WORLD_CAST}</span>
@@ -268,7 +353,7 @@ function Builder({ id }: { id: string }) {
             ) : null}
             <FriendPicker onPick={addCast} label="Walk into the world" />
           </div>
-          <div className="panel-sec">
+          <div className="panel-sec" data-sec="world">
             <p className="hint" style={{ marginTop: 0 }}>This world is saved to your studio. In the manga editor, pick any panel and choose <b>World</b> to frame a shot of it. Each page keeps its own copy, so editing the world later never changes a published issue.</p>
           </div>
         </aside>

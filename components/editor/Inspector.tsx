@@ -32,7 +32,7 @@ import {
   type WorldDoc,
 } from "@/lib/model";
 import { LayoutIcon } from "./LayoutIcon";
-import type { Sel } from "./Editor";
+import type { Sel, TrayTab } from "./Editor";
 
 type Props = {
   story: Story;
@@ -50,9 +50,12 @@ type Props = {
   deleteSel(): void;
   duplicateSel(): void;
   reorder(dir: 1 | -1): void;
-  pageActions: { addPage(): void; dupPage(): void; delPage(): void; movePage(d: 1 | -1): void };
+  pageActions: { addPage(): void; dupPage(): void; delPage(): void; movePage(d: 1 | -1): void; goPage(i: number): void };
   setSel(s: Sel): void;
   svgRef: RefObject<SVGSVGElement | null>;
+  /** Which tray tab a phone shows; desktop shows every section. */
+  tab: TrayTab;
+  coarse: boolean;
 };
 
 const SFX_PRESETS = ["BAM!", "DOKI DOKI", "GOGOGO", "ZOOOM", "KRAK!", "SHING", "WAAAH", "GM", "LFG", "WAGMI", "NGMI", "!?"];
@@ -114,7 +117,7 @@ function PanelInspector({ story, page, i, mutatePage, art }: { story: Story; pag
   const framed = (scene: WorldDoc["scene"]) => fitWorld(scene.base, box);
   const setBg = (next: PanelBg, record = true) => mutatePage((p) => ({ ...p, panels: p.panels.map((pn, k) => (k === i ? { bg: next } : pn)) }), record);
   return (
-    <div className="panel-sec" style={{ background: "#f7ffd6" }}>
+    <div className="panel-sec" data-sec="edit" style={{ background: "#f7ffd6" }}>
       <h4>
         <span>PANEL {i + 1}</span>
         <div className="toggle" role="group" aria-label="Panel background">
@@ -189,18 +192,18 @@ function PanelInspector({ story, page, i, mutatePage, art }: { story: Story; pag
   );
 }
 
-function ItemInspector({ story, it, art, mutateItem, deleteSel, duplicateSel, reorder }: { story: Story; it: Item; art: Map<string, FriendArt> } & Pick<Props, "mutateItem" | "deleteSel" | "duplicateSel" | "reorder">) {
+function ItemInspector({ story, it, art, mutateItem, deleteSel, duplicateSel, reorder, coarse }: { story: Story; it: Item; art: Map<string, FriendArt> } & Pick<Props, "mutateItem" | "deleteSel" | "duplicateSel" | "reorder" | "coarse">) {
   const set = (patch: Partial<Item>, record = true) => mutateItem(it.id, (x) => ({ ...x, ...patch }) as Item, record);
   const title = it.t === "friend" ? `${it.friend.c} #${it.friend.id}` : it.t === "bubble" ? `${it.style} bubble` : it.t === "sfx" ? "Sound effect" : it.t === "emote" ? `Emote · ${it.kind}` : `Prop · ${it.type}`;
   return (
-    <div className="panel-sec" style={{ background: "#CCFF00" }}>
+    <div className="panel-sec" data-sec="edit" style={{ background: "#CCFF00" }}>
       <h4>
         <span>{title.toUpperCase()}</span>
         <span className="row-btns">
-          <button className="btn small" onClick={() => reorder(-1)} title="Send backward">↓</button>
-          <button className="btn small" onClick={() => reorder(1)} title="Bring forward">↑</button>
-          <button className="btn small" onClick={duplicateSel} title="Duplicate (Ctrl+D)">⧉</button>
-          <button className="btn small danger" onClick={deleteSel} title="Delete">✕</button>
+          <button className="btn small" onClick={() => reorder(-1)} title="Send backward" aria-label="Send backward">↓</button>
+          <button className="btn small" onClick={() => reorder(1)} title="Bring forward" aria-label="Bring forward">↑</button>
+          <button className="btn small" onClick={duplicateSel} title="Duplicate (Ctrl+D)" aria-label="Duplicate">⧉</button>
+          <button className="btn small danger" onClick={deleteSel} title="Delete" aria-label="Delete">✕</button>
         </span>
       </h4>
       {it.t === "friend" ? (
@@ -249,7 +252,7 @@ function ItemInspector({ story, it, art, mutateItem, deleteSel, duplicateSel, re
         <>
           <label className="field">
             <span>Words</span>
-            <textarea value={it.text} maxLength={280} onChange={(e) => set({ text: e.target.value }, false)} autoFocus={!it.text} />
+            <textarea value={it.text} maxLength={280} onChange={(e) => set({ text: e.target.value }, false)} autoFocus={!it.text && !coarse} />
           </label>
           <div className="field">
             <span>Style</span>
@@ -308,13 +311,13 @@ function ItemInspector({ story, it, art, mutateItem, deleteSel, duplicateSel, re
           </div>
         </>
       ) : null}
-      {it.t !== "bubble" ? <p className="hint">Drag the green corner to resize, the round handle to rotate. Arrow keys nudge.</p> : null}
+      {it.t !== "bubble" ? <p className="hint">Drag the green corner to resize, the round handle to rotate.{coarse ? "" : " Arrow keys nudge."}</p> : null}
     </div>
   );
 }
 
 export function Inspector(p: Props) {
-  const { story, page, sel, selItem, art, addItem, addFriend, mutatePage, mutate, pageIdx, pageActions, missing } = p;
+  const { story, page, sel, selItem, art, addItem, addFriend, mutatePage, mutate, pageIdx, pageActions, missing, tab, coarse } = p;
   const [addTab, setAddTab] = useState<"friend" | "bubble" | "sfx" | "emote" | "prop">("friend");
   const [showDetails, setShowDetails] = useState(false);
 
@@ -325,11 +328,16 @@ export function Inspector(p: Props) {
   const addProp = (type: (typeof PROP_TYPES)[number]) => addItem(({ x, y, panel }) => ({ id: newId(), t: "prop", x, y: y + 80, rot: 0, panel, type, size: 260 }));
 
   return (
-    <aside className="inspector" aria-label="Inspector">
-      {selItem ? <ItemInspector story={story} it={selItem} art={art} mutateItem={p.mutateItem} deleteSel={p.deleteSel} duplicateSel={p.duplicateSel} reorder={p.reorder} /> : null}
+    <aside className="inspector" aria-label="Inspector" data-tab={tab}>
+      {selItem ? <ItemInspector story={story} it={selItem} art={art} mutateItem={p.mutateItem} deleteSel={p.deleteSel} duplicateSel={p.duplicateSel} reorder={p.reorder} coarse={coarse} /> : null}
       {sel?.k === "panel" ? <PanelInspector story={story} page={page} i={sel.i} mutatePage={mutatePage} art={art} /> : null}
+      {!selItem && sel?.k !== "panel" ? (
+        <div className="panel-sec phone-only" data-sec="edit">
+          <p className="hint" style={{ marginTop: 0 }}>Tap a Friend, bubble, sound or sticker on the page to edit it. Tap an empty part of a panel to set its background.</p>
+        </div>
+      ) : null}
 
-      <div className="panel-sec">
+      <div className="panel-sec" data-sec="add">
         <h4>ADD TO {sel?.k === "panel" ? `PANEL ${sel.i + 1}` : "PAGE"}</h4>
         <div className="grid-btns" style={{ gridTemplateColumns: "repeat(5, 1fr)", marginBottom: 12 }}>
           {(["friend", "bubble", "sfx", "emote", "prop"] as const).map((t) => (
@@ -375,7 +383,14 @@ export function Inspector(p: Props) {
         {missing.length ? <p className="hint">Could not load art for {missing.join(", ")}. Those show as a dashed box.</p> : null}
       </div>
 
-      <div className="panel-sec">
+      <div className="panel-sec" data-sec="page">
+        <div className="field phone-only">
+          <span>Colour mode (whole issue)</span>
+          <div className="toggle" role="group" aria-label="Colour mode">
+            <button aria-pressed={!story.color} onClick={() => mutate((s) => ({ ...s, color: false }))}>B&amp;W</button>
+            <button aria-pressed={story.color} className="color-on" onClick={() => mutate((s) => ({ ...s, color: true }))}>Colour</button>
+          </div>
+        </div>
         <h4>
           <span>PAGE {pageIdx + 1} OF {story.pages.length}</span>
           <span className="row-btns">
@@ -402,19 +417,23 @@ export function Inspector(p: Props) {
           <button className="btn small" onClick={pageActions.dupPage}>Duplicate</button>
           <button className="btn small danger" onClick={pageActions.delPage} disabled={story.pages.length <= 1}>Delete page</button>
         </div>
-        <p className="hint">Click a panel to set its background: a screentone, or a world from FriendSDK or your own.</p>
+        <p className="hint">{coarse ? "Tap" : "Click"} a panel to set its background: a screentone, or a world from FriendSDK or your own.</p>
       </div>
 
-      <div className="panel-sec">
+      <div className="panel-sec" data-sec="issue">
         <h4>
           <span>ISSUE DETAILS</span>
-          <button className="btn small" onClick={() => setShowDetails((v) => !v)}>{showDetails ? "Hide" : "Edit"}</button>
+          <button className="btn small desk-only" onClick={() => setShowDetails((v) => !v)}>{showDetails ? "Hide" : "Edit"}</button>
         </h4>
-        {showDetails ? (
+        {showDetails || tab === "issue" ? (
           <>
+            <label className="field phone-only">
+              <span>Title</span>
+              <input type="text" value={story.title} maxLength={80} onChange={(e) => mutate((s) => ({ ...s, title: e.target.value }), false)} />
+            </label>
             <label className="field">
               <span>Logline (shows on the reader page and the shelf)</span>
-              <textarea value={story.logline} maxLength={240} onChange={(e) => mutate((s) => ({ ...s, logline: e.target.value }), false)} style={{ fontFamily: "var(--f-ui)", fontSize: 14 }} />
+              <textarea value={story.logline} maxLength={240} onChange={(e) => mutate((s) => ({ ...s, logline: e.target.value }), false)} style={{ fontFamily: "var(--f-ui)", fontSize: 16 }} />
             </label>
             <label className="field">
               <span>Pen name (optional, otherwise your wallet)</span>
@@ -424,7 +443,11 @@ export function Inspector(p: Props) {
         ) : (
           <p className="hint" style={{ marginTop: 0 }}>{story.logline || "Add a logline and a pen name before you publish."}</p>
         )}
-        {story.remixOf ? <p className="hint">Remix of “{story.remixOf.title}” by {story.remixOf.by}. The credit stays on the published issue.</p> : null}
+        {story.published ? (
+          <a className="btn small phone-only" href={`/read/${story.published.slug}`} target="_blank" rel="noopener noreferrer" style={{ marginTop: 6 }}>View live issue</a>
+        ) : null}
+        {story.remixOf ? <p className="hint">Remix
+ of “{story.remixOf.title}” by {story.remixOf.by}. The credit stays on the published issue.</p> : null}
       </div>
     </aside>
   );

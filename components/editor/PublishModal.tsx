@@ -81,7 +81,7 @@ export function PublishModal({ story, onClose, onPublished }: { story: Story; on
               {story.pages.length} page{story.pages.length === 1 ? "" : "s"}, {story.color ? "colour" : "black and white"}, by <b>{byline(story)}</b>. Your pages are rendered at 1200 x 1800 and a share card is made for X.
               {story.published ? " The link stays the same; readers see the new version." : ""}
             </p>
-            {!story.logline || !story.penName ? <p className="note">Tip: add a logline and pen name in Issue details (right panel) so the shelf and your X card read better.</p> : null}
+            {!story.logline || !story.penName ? <p className="note">Tip: add a logline and pen name in Issue details so the shelf and your X card read better.</p> : null}
             {phase.step === "working" ? (
               <>
                 <div className="progress" aria-hidden>
