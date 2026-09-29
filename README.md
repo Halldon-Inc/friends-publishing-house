@@ -44,7 +44,7 @@ Without `BLOB_READ_WRITE_TOKEN`, everything is stored in `./.data`. The dev sign
 
 ## Credits
 
-FriendSDK v0.1.3 (Apache-2.0) is vendored as its release tarball in `vendor/` (SHA-256 matches the release's
+FriendSDK v0.1.4 (Apache-2.0) is vendored as its release tarball in `vendor/` (SHA-256 matches the release's
 SHA256SUMS). World artwork: Rare Friends Isometric World Assets. Character artwork: canonical Rare Friends
 Generations sprites and on-chain Genesis portraits. See FriendSDK's NOTICE.md. Fonts (SIL OFL): Dela Gothic One,
 Bangers, Comic Neue, Silkscreen, Space Grotesk. Community project, not affiliated with Rare Friends.
