@@ -22,7 +22,7 @@ FriendSDK, ink pages, and publish. Anyone can read, share to X or Farcaster, emb
 ```sh
 npm install
 cp .env.example .env.local   # set DEV_LOGIN_ADDRESS + DEV_CAST_WALLET for a wallet-free local sign-in
-npm run dev -- -p 3190
+npx next dev -p 3190
 ```
 
 Without `BLOB_READ_WRITE_TOKEN`, everything is stored in `./.data`. The dev sign-in only exists when
