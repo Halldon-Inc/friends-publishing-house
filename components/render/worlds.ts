@@ -37,7 +37,8 @@ export function worldImage(scene: WorldScene, color: boolean, art: Map<string, F
     });
     const actors = scene.cast.flatMap((a) => {
       const f = art.get(friendKey(a.friend));
-      if (!f) return [];
+      // Same rule as props: a Friend off the ground is left out instead of failing the whole world.
+      if (!f || !onGround(scene.base, a.x, a.y)) return [];
       return [{ x: a.x, y: a.y, rows: spriteBox(artRows(f, a.facing, a.pose, a.frame)), pixelScale: a.scale }];
     });
     svg = renderWorld(config, { color, actors, signals: false });
