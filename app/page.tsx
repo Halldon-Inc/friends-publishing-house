@@ -3,7 +3,8 @@ import { DemoPages } from "@/components/DemoPages";
 import { Shelf } from "@/components/Shelf";
 import { feed } from "@/lib/db";
 
-export const revalidate = 30;
+// Rendered per request: the shelf reads storage fresh, which a background-regenerated page cannot do.
+export const dynamic = "force-dynamic";
 
 const TICKER = ["FRIENDSDK WORLDS", "BLACK & WHITE OR FULL COLOUR", "HOLDERS CREATE", "EVERYONE READS", "REMIX ANY ISSUE", "POST TO X", "SPEED LINES INCLUDED", "YOUR FRIEND IS THE LEAD"];
 

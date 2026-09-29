@@ -2,7 +2,7 @@ import { feed } from "@/lib/db";
 import { byline } from "@/lib/model";
 import { absolute, baseUrl, SITE_NAME, TAGLINE } from "@/lib/site";
 
-export const revalidate = 300;
+export const dynamic = "force-dynamic";
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
 export async function GET() {

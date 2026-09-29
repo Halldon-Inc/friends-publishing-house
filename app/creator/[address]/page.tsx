@@ -4,7 +4,7 @@ import { Shelf } from "@/components/Shelf";
 import { feed } from "@/lib/db";
 import { byline, isAddress, shortAddr } from "@/lib/model";
 
-export const revalidate = 60;
+export const dynamic = "force-dynamic";
 type Props = { params: Promise<{ address: string }> };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
