@@ -105,6 +105,7 @@ button, a, input, select, textarea, label { touch-action: manipulation; }
   .reader-top .by a { display: inline-block; padding: 13px 0; }
   .toggle button { min-height: 44px; }
   .btn.small { min-height: 44px; }
+  .pages figcaption a { display: inline-flex; align-items: center; min-height: 44px; }
   .field input[type="text"], .field textarea, .field select, .field input[type="number"] { font-size: 16px; }
 }
 
